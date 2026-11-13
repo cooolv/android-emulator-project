@@ -1,0 +1,11 @@
+# مثال Maestro: بيشتغل مع أي تطبيق لأن appId بيتحدد تلقائياً
+# اسم اللقطة لازم يبدأ بـ flow_ عشان تظهر في الصفحة
+appId: ${APP_ID}
+---
+- launchApp
+- takeScreenshot: flow_home
+# أمثلة (فك التعليق وعدّل حسب تطبيقك):
+# - tapOn: "Login"
+# - inputText: "test@example.com"
+# - assertVisible: "Welcome"
+# - takeScreenshot: flow_after_login

@@ -1,0 +1,50 @@
+# قالب لاختبار عميل تليجرام مبني على TDLib باستخدام حساب اختبار (Test DC)
+# الأسرار المطلوبة في GitHub (Settings ← Secrets ← Actions):
+#   FLOW_PHONE    = 6621111   (بعد كود الدولة +999)
+#   FLOW_CODE     = 22222     (رقم الـ DC متكرر 5 مرات، لو مشتغلش جرب 6 مرات)
+#   FLOW_PASSWORD = باسورد التحقق بخطوتين (اختياري، لو الحساب عليه 2FA)
+# مهم: التطبيق لازم يكون مبني يتصل بـ Test DC (useTestDc=true في TDLib)
+# تحذير: نصوص الأزرار تحت أمثلة، عدّلها حسب شاشات تطبيقك.
+# واجهة تليجرام الأصلية مرسومة مخصوص، فلو الـ selectors مشتغلتش استخدم الإحداثيات:
+#   - tapOn:
+#       point: "50%,80%"
+appId: ${APP_ID}
+---
+- launchApp:
+    clearState: true
+    permissions: { all: allow }
+- takeScreenshot: flow_01_start
+
+- tapOn: "Start Messaging"
+- tapOn: "Phone Number"
+- inputText: ${FLOW_PHONE}
+- takeScreenshot: flow_02_phone
+- tapOn: "Next"
+
+# شاشة الكود: بيكتب الكود وغالباً بيتأكد تلقائياً
+- extendedWaitUntil:
+    visible: ".*[Cc]ode.*"
+    timeout: 30000
+- inputText: ${FLOW_CODE}
+- takeScreenshot: flow_03_code
+
+# شاشة 2FA (احذف الجزء ده لو الحساب مفيهوش باسورد)
+- extendedWaitUntil:
+    visible: ".*[Pp]assword.*"
+    timeout: 20000
+- inputText: ${FLOW_PASSWORD}
+- tapOn: "Next"
+
+# قائمة المحادثات: سكرول ثم فتح أول محادثة
+- extendedWaitUntil:
+    visible: ".*"
+    timeout: 30000
+- takeScreenshot: flow_04_chats
+- scroll
+- scroll
+- scrollUntilVisible:
+    element: ".*"
+    direction: UP
+- tapOn:
+    point: "50%,22%"
+- takeScreenshot: flow_05_chat_open

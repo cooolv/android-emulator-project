@@ -1,0 +1,161 @@
+name: Android APK Emulator
+
+on:
+  workflow_dispatch:
+    inputs:
+      apk_url:
+        description: "رابط مباشر لـ APK/XAPK/APKS (اختياري، لو فاضي ياخد آخر ملف من apks/)"
+        required: false
+        default: ""
+      api_levels:
+        description: "إصدارات أندرويد مفصولة بفاصلة، مثال: 30,34"
+        required: false
+        default: "34"
+      fail_on_crash:
+        description: "يفشّل الـ workflow لو حصل crash أو فشلت السيناريوهات"
+        type: boolean
+        default: false
+      skip_monkey:
+        description: "تعطيل الضغط العشوائي (استخدمه مع الحسابات الحقيقية)"
+        type: boolean
+        default: false
+      publish_pages:
+        description: "نشر النتائج على GitHub Pages (عطّله لو فيها بيانات خاصة)"
+        type: boolean
+        default: true
+  push:
+    paths:
+      - "apks/*.apk"
+      - "apks/*.xapk"
+      - "apks/*.apks"
+      - "flows/**"
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+concurrency:
+  group: pages
+  cancel-in-progress: true
+
+jobs:
+  prepare:
+    runs-on: ubuntu-latest
+    outputs:
+      levels: ${{ steps.l.outputs.levels }}
+    steps:
+      - id: l
+        env:
+          IN: ${{ inputs.api_levels }}
+        run: |
+          IN="${IN:-34}"
+          echo "levels=$(echo "$IN" | tr -d ' ' | jq -R -c 'split(",")')" >> "$GITHUB_OUTPUT"
+
+  emulate:
+    needs: prepare
+    runs-on: ubuntu-latest
+    timeout-minutes: 40
+    strategy:
+      fail-fast: false
+      matrix:
+        api: ${{ fromJSON(needs.prepare.outputs.levels) }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Get APK
+        env:
+          APK_URL: ${{ inputs.apk_url }}
+        run: bash scripts/get_apk.sh
+
+      - name: Enable KVM
+        run: |
+          echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' | sudo tee /etc/udev/rules.d/99-kvm4all.rules
+          sudo udevadm control --reload-rules
+          sudo udevadm trigger --name-match=kvm
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: 17
+
+      - name: Install Maestro (لو فيه flows)
+        if: ${{ hashFiles('flows/*.yaml', 'flows/*.yml') != '' }}
+        run: |
+          curl -fsSL "https://get.maestro.mobile.dev" | bash
+          echo "$HOME/.maestro/bin" >> "$GITHUB_PATH"
+
+      - name: Run emulator
+        uses: reactivecircus/android-emulator-runner@v2
+        env:
+          API_LEVEL: ${{ matrix.api }}
+          SKIP_MONKEY: ${{ inputs.skip_monkey && '1' || '0' }}
+          FLOW_PHONE: ${{ secrets.FLOW_PHONE }}
+          FLOW_CODE: ${{ secrets.FLOW_CODE }}
+          FLOW_PASSWORD: ${{ secrets.FLOW_PASSWORD }}
+        with:
+          api-level: ${{ matrix.api }}
+          target: google_apis
+          arch: x86_64
+          profile: pixel_6
+          disable-animations: true
+          script: bash scripts/run.sh
+
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: result-api${{ matrix.api }}
+          path: out/
+          retention-days: 14
+
+      - name: Fail on problems
+        if: ${{ inputs.fail_on_crash }}
+        run: |
+          S=$(cat out/status.txt 2>/dev/null || echo UNKNOWN)
+          echo "status=$S"
+          [ "$S" = "OK" ]
+
+  publish:
+    needs: emulate
+    if: ${{ !cancelled() && github.event.inputs.publish_pages != 'false' }}
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: result-api*
+          path: site
+
+      - name: Build index page and summary
+        run: |
+          cd site
+          {
+            echo "<!doctype html><html lang='ar' dir='rtl'><meta charset='utf-8'>"
+            echo "<meta name='viewport' content='width=device-width,initial-scale=1'>"
+            echo "<title>نتائج المحاكي</title>"
+            echo "<body style='font-family:system-ui,sans-serif;max-width:800px;margin:auto;padding:16px'>"
+            echo "<h1>نتائج المحاكي</h1><ul>"
+          } > index.html
+          {
+            echo "### نتائج المحاكي"
+            echo "| API | الحالة |"
+            echo "|---|---|"
+          } >> "$GITHUB_STEP_SUMMARY"
+          for d in $(ls -d result-api* | sort -V); do
+            api="${d#result-api}"
+            st=$(cat "$d/status.txt" 2>/dev/null || echo UNKNOWN)
+            echo "<li><a href='$d/'>Android API $api</a> — <b>$st</b></li>" >> index.html
+            echo "| $api | $st |" >> "$GITHUB_STEP_SUMMARY"
+          done
+          echo "</ul></body></html>" >> index.html
+
+      - uses: actions/configure-pages@v5
+      - uses: actions/upload-pages-artifact@v3
+        with:
+          path: site/
+      - id: deployment
+        uses: actions/deploy-pages@v4
